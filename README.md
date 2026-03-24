@@ -1,5 +1,6 @@
 # elf hypervisor
 
+Developed by Nigel
 See `docs/README.md` for full documentation.
 
 ## Temporary Changelog
