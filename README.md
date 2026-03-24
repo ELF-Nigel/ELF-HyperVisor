@@ -60,6 +60,8 @@ See `docs/README.md` for full documentation.
 - added non-operational cpuid/msr/cr monitoring policies with vmexit telemetry counters.
 - added hv ring log buffer and ioctls for exit stats + hv log snapshots.
 - added unit-test style self-checks for alloc and paging helpers during `hv_init`.
+- added guard-backed VMXON/VMCS/VMCB allocations with interior-page placement for overrun isolation.
+- added shared vmexit reason name lookup for diagnostic logging paths.
 
 ## TODO (Next Code Tasks)
 - [x] implement real ept map/unmap helpers and invept/invpid stubs.
@@ -77,10 +79,10 @@ See `docs/README.md` for full documentation.
 - [x] add minimal ACPI table handoff (metadata only).
 - [x] add per-cpu watchdog for launch failures.
 - [x] add unit-test style self-checks for alloc and paging helpers.
-- add vmexit reason string table for diagnostics.
+- [x] add vmexit reason string table for diagnostics.
 - add io/cpuid table export helpers for debugging.
 - add vfio-like safe mapping layer for test builds (dev only).
-- add guard pages around vmcs/vmcb allocations.
+- [x] add guard pages around vmcs/vmcb allocations.
 - add per-cpu feature mask to gate mixed vendor scenarios.
 - add winload chainload smoke-test harness (dev only, no hooks).
 - add vmexit latency histogram and percentile export.

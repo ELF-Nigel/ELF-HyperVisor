@@ -3,9 +3,11 @@
 #include <ntddk.h>
 #include "driver/arch/vmx.h"
 #include "driver/arch/svm.h"
+#include "driver/core/stats.h"
 
 void hv_dump_vmx(vmx_state_t* st);
 void hv_dump_svm(svm_state_t* st);
+const char* hv_vmexit_reason_str(ULONG64 reason);
 
 typedef struct hv_trace_event_t {
     ULONG64 tsc;

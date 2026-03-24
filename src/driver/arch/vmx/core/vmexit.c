@@ -53,29 +53,29 @@ static void handle_ept(void){
 }
 
 static void hv_vmexit_default(ULONG64 reason) {
-    hv_log("route:default 0x%llx\n", reason);
+    hv_log("route:default %s (0x%llx)\n", hv_vmexit_reason_str(reason), reason);
 }
 
-int hv_vmexit_register(ULONG16 reason, hv_vmexit_handler_t handler) {
+int hv_vmexit_register(UINT16 reason, hv_vmexit_handler_t handler) {
     if (!handler) return STATUS_INVALID_PARAMETER;
     g_vmexit_table[reason] = handler;
     return STATUS_SUCCESS;
 }
 
-int hv_vmexit_unregister(ULONG16 reason) {
+int hv_vmexit_unregister(UINT16 reason) {
     g_vmexit_table[reason] = NULL;
     return STATUS_SUCCESS;
 }
 
 void hv_vmexit_dispatch(ULONG64 reason) {
-    ULONG16 idx = (ULONG16)(reason & 0xFFFF);
+    UINT16 idx = (UINT16)(reason & 0xFFFF);
     hv_vmexit_handler_t h = g_vmexit_table[idx];
     if (h) h(reason);
     else hv_vmexit_default(reason);
 }
 
 int hv_vmexit_dispatch_if_registered(ULONG64 reason) {
-    ULONG16 idx = (ULONG16)(reason & 0xFFFF);
+    UINT16 idx = (UINT16)(reason & 0xFFFF);
     hv_vmexit_handler_t h = g_vmexit_table[idx];
     if (!h) return 0;
     h(reason);

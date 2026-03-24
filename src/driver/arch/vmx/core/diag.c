@@ -2,7 +2,13 @@
 #include "driver/core/diag.h"
 #include "driver/util/log.h"
 #include "driver/util/alloc.h"
+#include "driver/arch/vmcs.h"
 #include <intrin.h>
+
+typedef struct hv_vmexit_reason_name_t {
+    UINT16 reason;
+    const char* name;
+} hv_vmexit_reason_name_t;
 
 typedef struct hv_trace_export_header_t {
     ULONG version;
@@ -21,6 +27,17 @@ typedef struct hv_stats_export_t {
     hv_stats_t stats;
 } hv_stats_export_t;
 
+static const hv_vmexit_reason_name_t g_vmexit_reason_names[] = {
+    { EXIT_REASON_CPUID, "cpuid" },
+    { EXIT_REASON_RDTSC, "rdtsc" },
+    { EXIT_REASON_VMCALL, "vmcall" },
+    { EXIT_REASON_CR_ACCESS, "cr_access" },
+    { EXIT_REASON_IO_INSTRUCTION, "io_instruction" },
+    { EXIT_REASON_RDMSR, "rdmsr" },
+    { EXIT_REASON_WRMSR, "wrmsr" },
+    { EXIT_REASON_EPT_VIOLATION, "ept_violation" }
+};
+
 void hv_dump_vmx(vmx_state_t* st) {
     if (!st) return;
     hv_log("vmx dump: vmxon=%p vmcs=%p\n", st->vmxon_region, st->vmcs_region);
@@ -29,6 +46,15 @@ void hv_dump_vmx(vmx_state_t* st) {
 void hv_dump_svm(svm_state_t* st) {
     if (!st) return;
     hv_log("svm dump: vmcb=%p\n", st->vmcb);
+}
+
+const char* hv_vmexit_reason_str(ULONG64 reason) {
+    UINT16 idx = (UINT16)(reason & 0xFFFF);
+
+    for (ULONG i = 0; i < RTL_NUMBER_OF(g_vmexit_reason_names); ++i) {
+        if (g_vmexit_reason_names[i].reason == idx) return g_vmexit_reason_names[i].name;
+    }
+    return "unknown";
 }
 
 int hv_trace_init(hv_trace_ring_t* r, ULONG capacity) {

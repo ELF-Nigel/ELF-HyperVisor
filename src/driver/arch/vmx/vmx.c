@@ -15,19 +15,30 @@ extern hv_stats_t g_hv_stats;
 #define IA32_FEATURE_CONTROL 0x3A
 #define IA32_VMX_BASIC 0x480
 
-static int vmx_alloc_region(void** region, PHYSICAL_ADDRESS* pa) {
-    *region = hv_alloc_page_aligned(PAGE_SIZE, 'xmvV');
+static void vmexit_handle_cpuid(void);
+static void vmexit_handle_rdtsc(void);
+static void vmexit_handle_rdmsr(void);
+static void vmexit_handle_wrmsr(void);
+
+static void vmx_free_region(void** region_raw, void** region, ULONG tag) {
+    if (region) *region = NULL;
+    if (region_raw && *region_raw) {
+        hv_free_guarded_page_aligned(*region_raw, tag);
+        *region_raw = NULL;
+    }
+}
+
+static int vmx_alloc_region(void** region_raw, void** region, PHYSICAL_ADDRESS* pa) {
+    *region = hv_alloc_guarded_page_aligned(PAGE_SIZE, 'Vvmx', region_raw);
     if (!*region) return 0;
     if (!hv_is_page_aligned(*region)) {
-        hv_free_page_aligned(*region, 'xmvV');
-        *region = NULL;
+        vmx_free_region(region_raw, region, 'Vvmx');
         return 0;
     }
     RtlZeroMemory(*region, PAGE_SIZE);
     *pa = MmGetPhysicalAddress(*region);
     if (pa->QuadPart == 0 || !hv_is_phys_page_aligned(*pa)) {
-        hv_free_page_aligned(*region, 'xmvV');
-        *region = NULL;
+        vmx_free_region(region_raw, region, 'Vvmx');
         return 0;
     }
         // base outline: vmwrite msr/io bitmap addresses, pin/cpu controls,
@@ -73,19 +84,19 @@ int vmx_init(vmx_state_t* st) {
     if (!st) return STATUS_INVALID_PARAMETER;
     if (!vmx_check_support()) return STATUS_NOT_SUPPORTED;
 
-    if (!vmx_alloc_region(&st->vmxon_region, &st->vmxon_pa))
+    if (!vmx_alloc_region(&st->vmxon_region_raw, &st->vmxon_region, &st->vmxon_pa))
         return STATUS_INSUFFICIENT_RESOURCES;
 
-    if (!vmx_alloc_region(&st->vmcs_region, &st->vmcs_pa))
+    if (!vmx_alloc_region(&st->vmcs_region_raw, &st->vmcs_region, &st->vmcs_pa))
         return STATUS_INSUFFICIENT_RESOURCES;
 
-    st->msr_bitmap = hv_alloc_page_aligned(PAGE_SIZE, 'B rsm');
-    st->io_bitmap_a = hv_alloc_page_aligned(PAGE_SIZE, ' Aoi');
-    st->io_bitmap_b = hv_alloc_page_aligned(PAGE_SIZE, ' Boi');
+    st->msr_bitmap = hv_alloc_page_aligned(PAGE_SIZE, 'rsmB');
+    st->io_bitmap_a = hv_alloc_page_aligned(PAGE_SIZE, 'ioA ');
+    st->io_bitmap_b = hv_alloc_page_aligned(PAGE_SIZE, 'ioB ');
     if (!st->msr_bitmap || !st->io_bitmap_a || !st->io_bitmap_b) {
-        if (st->msr_bitmap) { hv_free_page_aligned(st->msr_bitmap, 'B rsm'); st->msr_bitmap = NULL; }
-        if (st->io_bitmap_a) { hv_free_page_aligned(st->io_bitmap_a, ' Aoi'); st->io_bitmap_a = NULL; }
-        if (st->io_bitmap_b) { hv_free_page_aligned(st->io_bitmap_b, ' Boi'); st->io_bitmap_b = NULL; }
+        if (st->msr_bitmap) { hv_free_page_aligned(st->msr_bitmap, 'rsmB'); st->msr_bitmap = NULL; }
+        if (st->io_bitmap_a) { hv_free_page_aligned(st->io_bitmap_a, 'ioA '); st->io_bitmap_a = NULL; }
+        if (st->io_bitmap_b) { hv_free_page_aligned(st->io_bitmap_b, 'ioB '); st->io_bitmap_b = NULL; }
         return STATUS_INSUFFICIENT_RESOURCES;
     }
     RtlZeroMemory(st->msr_bitmap, PAGE_SIZE);
@@ -96,9 +107,9 @@ int vmx_init(vmx_state_t* st) {
     st->io_bitmap_b_pa = MmGetPhysicalAddress(st->io_bitmap_b);
     if (st->msr_bitmap_pa.QuadPart == 0 || st->io_bitmap_a_pa.QuadPart == 0 || st->io_bitmap_b_pa.QuadPart == 0 ||
         !hv_is_phys_page_aligned(st->msr_bitmap_pa) || !hv_is_phys_page_aligned(st->io_bitmap_a_pa) || !hv_is_phys_page_aligned(st->io_bitmap_b_pa)) {
-        hv_free_page_aligned(st->msr_bitmap, 'B rsm'); st->msr_bitmap = NULL;
-        hv_free_page_aligned(st->io_bitmap_a, ' Aoi'); st->io_bitmap_a = NULL;
-        hv_free_page_aligned(st->io_bitmap_b, ' Boi'); st->io_bitmap_b = NULL;
+        hv_free_page_aligned(st->msr_bitmap, 'rsmB'); st->msr_bitmap = NULL;
+        hv_free_page_aligned(st->io_bitmap_a, 'ioA '); st->io_bitmap_a = NULL;
+        hv_free_page_aligned(st->io_bitmap_b, 'ioB '); st->io_bitmap_b = NULL;
         return STATUS_UNSUCCESSFUL;
     }
 
@@ -152,11 +163,11 @@ int vmx_launch(vmx_state_t* st) {
 int vmx_shutdown(vmx_state_t* st) {
     if (!st) return STATUS_INVALID_PARAMETER;
     if (st->vmx_on) vmx_vmxoff();
-    if (st->vmcs_region) { hv_free_page_aligned(st->vmcs_region, 'xmvV'); st->vmcs_region = NULL; }
-    if (st->msr_bitmap) { hv_free_page_aligned(st->msr_bitmap, 'B rsm'); st->msr_bitmap = NULL; }
-    if (st->io_bitmap_a) { hv_free_page_aligned(st->io_bitmap_a, ' Aoi'); st->io_bitmap_a = NULL; }
-    if (st->io_bitmap_b) { hv_free_page_aligned(st->io_bitmap_b, ' Boi'); st->io_bitmap_b = NULL; }
-    if (st->vmxon_region) { hv_free_page_aligned(st->vmxon_region, 'xmvV'); st->vmxon_region = NULL; }
+    vmx_free_region(&st->vmcs_region_raw, &st->vmcs_region, 'Vvmx');
+    if (st->msr_bitmap) { hv_free_page_aligned(st->msr_bitmap, 'rsmB'); st->msr_bitmap = NULL; }
+    if (st->io_bitmap_a) { hv_free_page_aligned(st->io_bitmap_a, 'ioA '); st->io_bitmap_a = NULL; }
+    if (st->io_bitmap_b) { hv_free_page_aligned(st->io_bitmap_b, 'ioB '); st->io_bitmap_b = NULL; }
+    vmx_free_region(&st->vmxon_region_raw, &st->vmxon_region, 'Vvmx');
     st->vmx_on = 0;
     st->vmcs_loaded = 0;
     return STATUS_SUCCESS;
@@ -262,7 +273,7 @@ static void vmexit_handle_wrmsr(void) {
 }
 
 static void vmexit_handle_default(ULONG64 reason) {
-    hv_log("unhandled vmexit=0x%llx\n", reason);
+    hv_log("unhandled vmexit=%s (0x%llx)\n", hv_vmexit_reason_str(reason), reason);
 }
 
 
