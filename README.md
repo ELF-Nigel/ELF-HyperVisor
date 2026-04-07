@@ -62,6 +62,14 @@ See `docs/README.md` for full documentation.
 - added unit-test style self-checks for alloc and paging helpers during `hv_init`.
 - added guard-backed VMXON/VMCS/VMCB allocations with interior-page placement for overrun isolation.
 - added shared vmexit reason name lookup for diagnostic logging paths.
+- added trace ring rate limiting and backpressure counters with exported drop metrics.
+- added runtime integrity hashing for handoff + active config values.
+- added per-cpu vmx/svm launch retry with exponential backoff and failure dump capture.
+- added sanitized guest-physical memory map snapshot export section.
+- added per-cpu vmexit ring snapshots captured on fatal launch (panic) path.
+- added efi init-failure menu timeout with configurable default action.
+- added static analyzer annotations for driver entry and npt memory-map helper routines.
+- added low-memory fallback path for alloc helpers.
 
 ## TODO (Next Code Tasks)
 - [x] implement real ept map/unmap helpers and invept/invpid stubs.
@@ -86,15 +94,15 @@ See `docs/README.md` for full documentation.
 - add per-cpu feature mask to gate mixed vendor scenarios.
 - add winload chainload smoke-test harness (dev only, no hooks).
 - add vmexit latency histogram and percentile export.
-- add trace ring rate limiting and backpressure counters.
-- add integrity hash for handoff + config variables at runtime.
-- add per-cpu vmx/svm launch retry with exponential backoff.
-- add guest-physical memory map snapshot export (sanitized).
-- add per-cpu state dump on launch failure (struct + last error).
-- add EFI config menu timeout + default action.
-- add static analyzer annotations for driver entry and memory map helpers.
-- add per-cpu vmexit ring snapshots on panic.
-- add low-memory fallback path for alloc helpers.
+- [x] add trace ring rate limiting and backpressure counters.
+- [x] add integrity hash for handoff + config variables at runtime.
+- [x] add per-cpu vmx/svm launch retry with exponential backoff.
+- [x] add guest-physical memory map snapshot export (sanitized).
+- [x] add per-cpu state dump on launch failure (struct + last error).
+- [x] add EFI config menu timeout + default action.
+- [x] add static analyzer annotations for driver entry and memory map helpers.
+- [x] add per-cpu vmexit ring snapshots on panic.
+- [x] add low-memory fallback path for alloc helpers.
 - add trace ring compression option (delta-encoded timestamps).
 - add module signature whitelist for resolver framework.
 - add vmcs/vmcb version detection sanity check.

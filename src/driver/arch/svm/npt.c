@@ -1,5 +1,6 @@
 // npt.c - nested page tables helpers (skeleton)
 #include "driver/arch/npt.h"
+#include "driver/arch/svm.h"
 #include "driver/util/alloc.h"
 
 static int svm_npt_alloc_table_page(void** out, ULONG tag) {
@@ -48,6 +49,7 @@ static void svm_npt_free_pt_ranges(svm_npt_tables_t* npt) {
     npt->pt_range_count = 0;
 }
 
+_Use_decl_annotations_
 int svm_npt_setup_ranges(svm_npt_tables_t* npt) {
     if (!npt) return STATUS_INVALID_PARAMETER;
     if (KeGetCurrentIrql() != PASSIVE_LEVEL) return STATUS_INVALID_DEVICE_STATE;
@@ -70,6 +72,7 @@ int svm_npt_setup_ranges(svm_npt_tables_t* npt) {
     return (npt->pt_range_count > 0) ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
 
+_Use_decl_annotations_
 int svm_npt_allocate_pts_for_ranges(svm_npt_tables_t* npt) {
     if (!npt) return STATUS_INVALID_PARAMETER;
     if (KeGetCurrentIrql() != PASSIVE_LEVEL) return STATUS_INVALID_DEVICE_STATE;
@@ -183,6 +186,7 @@ int svm_npt_build_tables(svm_npt_tables_t* npt) {
     return STATUS_SUCCESS;
 }
 
+_Use_decl_annotations_
 int svm_npt_sync_physical_ranges(svm_npt_tables_t* npt) {
     if (!npt) return STATUS_INVALID_PARAMETER;
     if (KeGetCurrentIrql() != PASSIVE_LEVEL) return STATUS_INVALID_DEVICE_STATE;

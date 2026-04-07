@@ -34,6 +34,9 @@ typedef struct {
   UINT32 Code;
 } HV_INIT_RESULT;
 
+#define HV_INIT_MENU_TIMEOUT_SECONDS 10
+#define HV_INIT_MENU_DEFAULT_ACTION  L'c'
+
 typedef struct {
   CONST CHAR16* Name;
   BOOLEAN Enabled;
@@ -134,17 +137,33 @@ static VOID ShowInitFailure(const HV_INIT_RESULT* Res) {
   Print(L"  r - retry initialization\n");
   Print(L"  c - continue boot without hv\n");
   Print(L"  l - view log entries\n\n");
+  Print(L"default action in %u seconds: continue without hv\n\n", (UINT32)HV_INIT_MENU_TIMEOUT_SECONDS);
 }
 
-static BOOLEAN WaitForInitChoice(CHAR16* OutChoice) {
+static BOOLEAN WaitForInitChoice(CHAR16* OutChoice, UINTN TimeoutSeconds, CHAR16 DefaultChoice) {
+  EFI_EVENT TimerEvent = NULL;
+  EFI_EVENT Events[2];
+
   if (!OutChoice) return FALSE;
+  *OutChoice = 0;
+  if (EFI_ERROR(gBS->CreateEvent(EVT_TIMER, 0, NULL, NULL, &TimerEvent))) return FALSE;
+  gBS->SetTimer(TimerEvent, TimerRelative, TimeoutSeconds * 10000000ull);
+  Events[0] = gST->ConIn->WaitForKey;
+  Events[1] = TimerEvent;
+
   while (TRUE) {
     EFI_INPUT_KEY Key;
     UINTN Index = 0;
-    gBS->WaitForEvent(1, &gST->ConIn->WaitForKey, &Index);
+    gBS->WaitForEvent(2, Events, &Index);
+    if (Index == 1) {
+      *OutChoice = DefaultChoice;
+      gBS->CloseEvent(TimerEvent);
+      return TRUE;
+    }
     if (EFI_ERROR(gST->ConIn->ReadKeyStroke(gST->ConIn, &Key))) continue;
     if (Key.UnicodeChar == L'r' || Key.UnicodeChar == L'c' || Key.UnicodeChar == L'l') {
       *OutChoice = Key.UnicodeChar;
+      gBS->CloseEvent(TimerEvent);
       return TRUE;
     }
   }
@@ -339,7 +358,7 @@ UefiMain(IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE* SystemTable) {
     }
     ShowInitFailure(&init);
     CHAR16 choice = 0;
-    if (!WaitForInitChoice(&choice)) break;
+    if (!WaitForInitChoice(&choice, HV_INIT_MENU_TIMEOUT_SECONDS, HV_INIT_MENU_DEFAULT_ACTION)) break;
     if (choice == L'l') {
       ShowLogScreen();
       ShowInitFailure(&init);

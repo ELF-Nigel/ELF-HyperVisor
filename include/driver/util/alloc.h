@@ -2,9 +2,16 @@
 #pragma once
 #include <ntddk.h>
 
+__forceinline void* hv_alloc_pool_fallback(SIZE_T size, ULONG tag) {
+    void* p = ExAllocatePoolWithTag(NonPagedPoolNx, size, tag);
+    if (p) return p;
+    // low-memory fallback for older targets where nx pool may be exhausted.
+    return ExAllocatePoolWithTag(NonPagedPool, size, tag);
+}
+
 __forceinline void* hv_alloc_page_aligned(SIZE_T size, ULONG tag) {
     SIZE_T total = size + PAGE_SIZE + sizeof(void*);
-    void* raw = ExAllocatePoolWithTag(NonPagedPoolNx, total, tag);
+    void* raw = hv_alloc_pool_fallback(total, tag);
     if (!raw) return NULL;
     ULONG_PTR start = (ULONG_PTR)raw + sizeof(void*);
     ULONG_PTR aligned = (start + (PAGE_SIZE - 1)) & ~(ULONG_PTR)(PAGE_SIZE - 1);
@@ -12,9 +19,36 @@ __forceinline void* hv_alloc_page_aligned(SIZE_T size, ULONG tag) {
     return (void*)aligned;
 }
 
+__forceinline void* hv_alloc_guarded_page_aligned(SIZE_T size, ULONG tag, void** raw_out) {
+    const SIZE_T slop = (PAGE_SIZE * 3) - 1;
+    SIZE_T total;
+    void* raw;
+    ULONG_PTR start;
+    ULONG_PTR aligned;
+
+    if (!raw_out || !size) return NULL;
+    *raw_out = NULL;
+    if (size > ((SIZE_T)-1) - slop) return NULL;
+
+    total = size + slop;
+    raw = hv_alloc_pool_fallback(total, tag);
+    if (!raw) return NULL;
+
+    start = (ULONG_PTR)raw + PAGE_SIZE;
+    aligned = (start + (PAGE_SIZE - 1)) & ~(ULONG_PTR)(PAGE_SIZE - 1);
+
+    *raw_out = raw;
+    return (void*)aligned;
+}
+
 __forceinline void hv_free_page_aligned(void* aligned, ULONG tag) {
     if (!aligned) return;
     void* raw = ((void**)aligned)[-1];
+    ExFreePoolWithTag(raw, tag);
+}
+
+__forceinline void hv_free_guarded_page_aligned(void* raw, ULONG tag) {
+    if (!raw) return;
     ExFreePoolWithTag(raw, tag);
 }
 

@@ -7,12 +7,14 @@ static hv_state_t g_hv;
 
 DRIVER_UNLOAD DriverUnload;
 
+_Use_decl_annotations_
 VOID DriverUnload(PDRIVER_OBJECT DriverObject) {
     UNREFERENCED_PARAMETER(DriverObject);
     hv_shutdown(&g_hv);
     hvctl_detach_driver();
 }
 
+_Use_decl_annotations_
 NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath) {
     UNREFERENCED_PARAMETER(RegistryPath);
 

@@ -17,6 +17,19 @@
 #include "driver/core/dpc.h"
 #include "driver/core/feature.h"
 
+typedef struct hv_launch_failure_dump_t {
+    NTSTATUS last_error;
+    ULONG cpu_index;
+    ULONG attempts;
+    ULONG64 timestamp;
+    ULONG64 cr0;
+    ULONG64 cr3;
+    ULONG64 cr4;
+    ULONG64 efer;
+    ULONG64 vmexit_last_reason;
+    ULONG64 vmexit_last_tsc;
+} hv_launch_failure_dump_t;
+
 typedef struct hv_cpu_t {
     ept_state_t ept;
     vmx_state_t vmx;
@@ -30,6 +43,7 @@ typedef struct hv_cpu_t {
     ULONG64 cr3;
     ULONG64 cr4;
     ULONG64 efer;
+    hv_launch_failure_dump_t failure_dump;
 } hv_cpu_t;
 
 typedef enum hv_cpu_vendor_t {
@@ -50,6 +64,10 @@ typedef struct hv_state_t {
     int ept_enabled;
     int npt_enabled;
     hv_dpc_t* dpcs;
+    UINT64 handoff_integrity_hash;
+    UINT64 config_integrity_hash;
+    hv_vmexit_cpu_snapshot_t panic_vmexit_snapshots[64];
+    ULONG panic_vmexit_snapshot_count;
 } hv_state_t;
 
 int hv_init(hv_state_t* hv);

@@ -17,12 +17,32 @@ typedef struct hv_trace_event_t {
 
 typedef struct hv_trace_ring_t {
     volatile LONG64 head;
+    volatile LONG64 dropped_rate_limited;
+    volatile LONG64 dropped_backpressure;
+    ULONG rate_limit_tsc_delta;
     ULONG capacity;
     hv_trace_event_t* events;
     HANDLE export_section;
     void* export_view;
     SIZE_T export_size;
 } hv_trace_ring_t;
+
+typedef struct hv_trace_drop_counters_t {
+    ULONGLONG rate_limited;
+    ULONGLONG backpressure;
+} hv_trace_drop_counters_t;
+
+typedef struct hv_vmexit_cpu_snapshot_t {
+    ULONG cpu;
+    ULONG samples;
+    ULONG64 last_tsc;
+    ULONG64 last_reason;
+} hv_vmexit_cpu_snapshot_t;
+
+typedef struct hv_gpa_range_snapshot_t {
+    ULONGLONG base_pfn;
+    ULONGLONG page_count;
+} hv_gpa_range_snapshot_t;
 
 int hv_trace_init(hv_trace_ring_t* r, ULONG capacity);
 void hv_trace_shutdown(hv_trace_ring_t* r);
@@ -32,12 +52,20 @@ void hv_trace_reset(hv_trace_ring_t* r);
 ULONG hv_trace_capacity(hv_trace_ring_t* r);
 ULONG hv_trace_count(hv_trace_ring_t* r);
 int hv_trace_peek(hv_trace_ring_t* r, ULONG index, hv_trace_event_t* out);
+void hv_trace_set_rate_limit(hv_trace_ring_t* r, ULONG tsc_delta);
+void hv_trace_get_drop_counters(hv_trace_ring_t* r, hv_trace_drop_counters_t* out);
+void hv_trace_snapshot_per_cpu(hv_trace_ring_t* r, hv_vmexit_cpu_snapshot_t* out, ULONG max_out);
 
 int hv_trace_export_init(hv_trace_ring_t* r, ULONG capacity, PCWSTR name);
 void hv_trace_export_shutdown(hv_trace_ring_t* r);
 int hv_trace_global_init(ULONG capacity);
 void hv_trace_global_shutdown(void);
 void hv_trace_push_global(ULONG64 reason, ULONG cpu);
+void hv_trace_global_get_drop_counters(hv_trace_drop_counters_t* out);
+void hv_trace_global_snapshot_per_cpu(hv_vmexit_cpu_snapshot_t* out, ULONG max_out);
+int hv_gpa_map_export_init(PCWSTR name, ULONG max_ranges);
+void hv_gpa_map_export_shutdown(void);
+void hv_gpa_map_export_refresh(void);
 
 void hv_stats_reset(void);
 void hv_stats_snapshot(hv_stats_t* out);

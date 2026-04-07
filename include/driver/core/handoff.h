@@ -39,3 +39,5 @@ typedef struct thv_handoff_t {
 
 extern const GUID g_thv_handoff_guid;
 NTSTATUS hv_load_efi_handoff(thv_handoff_t* out);
+UINT64 hv_hash64(const VOID* data, SIZE_T size, UINT64 seed);
+UINT64 hv_handoff_integrity_hash(const thv_handoff_t* handoff, const thv_config_t* config);

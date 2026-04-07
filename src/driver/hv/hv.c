@@ -10,6 +10,8 @@
 hv_stats_t g_hv_stats = {0};
 
 static const ULONG hv_launch_fail_limit = 3;
+static const ULONG hv_launch_retry_limit = 3;
+static const ULONG hv_launch_backoff_base_ms = 10;
 
 static NTSTATUS hv_selftest_fail(const char* suite, const char* check) {
     hv_log("[selftest] %s failed: %s\n", suite, check);
@@ -147,11 +149,90 @@ static ULONG64 hv_now_ticks(void) {
     return KeQueryInterruptTime();
 }
 
-static void hv_record_launch_failure(hv_cpu_t* cpu, NTSTATUS st) {
+static void hv_record_launch_failure(hv_cpu_t* cpu, ULONG cpu_index, NTSTATUS st, ULONG attempts) {
+    hv_vmexit_cpu_snapshot_t snap[64];
+
     if (!cpu) return;
     cpu->launch_failures += 1;
     cpu->last_launch_status = st;
     cpu->last_launch_time = hv_now_ticks();
+    cpu->failure_dump.last_error = st;
+    cpu->failure_dump.cpu_index = cpu_index;
+    cpu->failure_dump.attempts = attempts;
+    cpu->failure_dump.timestamp = cpu->last_launch_time;
+    cpu->failure_dump.cr0 = cpu->cr0;
+    cpu->failure_dump.cr3 = cpu->cr3;
+    cpu->failure_dump.cr4 = cpu->cr4;
+    cpu->failure_dump.efer = cpu->efer;
+    cpu->failure_dump.vmexit_last_reason = 0;
+    cpu->failure_dump.vmexit_last_tsc = 0;
+
+    hv_trace_global_snapshot_per_cpu(snap, RTL_NUMBER_OF(snap));
+    if (cpu_index < RTL_NUMBER_OF(snap) && snap[cpu_index].samples != 0) {
+        cpu->failure_dump.vmexit_last_reason = snap[cpu_index].last_reason;
+        cpu->failure_dump.vmexit_last_tsc = snap[cpu_index].last_tsc;
+    }
+
+    hv_log("[launch] cpu=%lu fail st=0x%08x attempts=%lu cr3=0x%llx last_vmexit=%s (0x%llx)\n",
+           cpu_index,
+           (UINT32)st,
+           attempts,
+           cpu->failure_dump.cr3,
+           hv_vmexit_reason_str(cpu->failure_dump.vmexit_last_reason),
+           cpu->failure_dump.vmexit_last_reason);
+}
+
+static void hv_capture_panic_vmexit_snapshots(hv_state_t* hv) {
+    if (!hv) return;
+    hv_trace_global_snapshot_per_cpu(hv->panic_vmexit_snapshots, RTL_NUMBER_OF(hv->panic_vmexit_snapshots));
+    hv->panic_vmexit_snapshot_count = RTL_NUMBER_OF(hv->panic_vmexit_snapshots);
+    hv_log("[panic] captured per-cpu vmexit snapshots (%lu slots)\n", hv->panic_vmexit_snapshot_count);
+}
+
+static void hv_launch_backoff(ULONG attempt) {
+    LARGE_INTEGER interval;
+    ULONG delay_ms = hv_launch_backoff_base_ms << attempt;
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL) return;
+    interval.QuadPart = -((LONGLONG)delay_ms * 10000LL);
+    KeDelayExecutionThread(KernelMode, FALSE, &interval);
+}
+
+static NTSTATUS hv_launch_cpu_with_retry(hv_state_t* hv, ULONG cpu_index) {
+    hv_cpu_t* cpu;
+    NTSTATUS st;
+
+    if (!hv || cpu_index >= hv->cpu_count) return STATUS_INVALID_PARAMETER;
+    cpu = &hv->cpus[cpu_index];
+
+    for (ULONG attempt = 0; attempt < hv_launch_retry_limit; ++attempt) {
+        st = STATUS_UNSUCCESSFUL;
+        if (hv->cpu_vendor == HV_CPU_VENDOR_INTEL) {
+            if (!cpu->vmx.vmx_on || !cpu->vmx.vmcs_loaded) return STATUS_INVALID_DEVICE_STATE;
+            st = vmx_launch(&cpu->vmx);
+        } else if (hv->cpu_vendor == HV_CPU_VENDOR_AMD) {
+            if (!cpu->svm.svm_on) return STATUS_INVALID_DEVICE_STATE;
+            st = svm_launch(&cpu->svm);
+        } else {
+            return STATUS_NOT_SUPPORTED;
+        }
+
+        if (st == STATUS_SUCCESS) {
+            cpu->last_launch_status = STATUS_SUCCESS;
+            cpu->last_launch_time = hv_now_ticks();
+            cpu->launched = 1;
+            return STATUS_SUCCESS;
+        }
+
+        hv_log("[launch] cpu=%lu retry=%lu st=0x%08x\n", cpu_index, attempt + 1, (UINT32)st);
+        if (attempt + 1 < hv_launch_retry_limit) {
+            hv_launch_backoff(attempt);
+        } else {
+            hv_record_launch_failure(cpu, cpu_index, st, attempt + 1);
+            return st;
+        }
+    }
+
+    return STATUS_UNSUCCESSFUL;
 }
 
 static ULONG hv_get_cpu_count(void) {
@@ -210,6 +291,9 @@ int hv_init(hv_state_t* hv) {
     } else {
         hv_config_defaults(&hv->active_config);
     }
+    hv->handoff_integrity_hash = hv_handoff_integrity_hash(&hv->handoff, &hv->active_config);
+    hv->config_integrity_hash = hv_hash64(&hv->active_config, sizeof(hv->active_config), 0x4346475f48415348ull);
+    hv_log("[integrity] handoff=0x%llx config=0x%llx\n", hv->handoff_integrity_hash, hv->config_integrity_hash);
 
     hv->cpu_count = hv_get_cpu_count();
     if (hv->cpu_count == 0) return STATUS_NOT_SUPPORTED;
@@ -224,6 +308,8 @@ int hv_init(hv_state_t* hv) {
 
     hv_trace_global_init(4096);
     hv_stats_export_init(L"\\BaseNamedObjects\\elfhvStats");
+    hv_gpa_map_export_init(L"\\BaseNamedObjects\\elfhvGpaMap", 256);
+    hv_gpa_map_export_refresh();
 
     for (ULONG i = 0; i < hv->cpu_count; ++i) {
         int ping = hv_dpc_ping_cpu(&hv->dpcs[i], 1000);
@@ -407,34 +493,29 @@ ULONG hv_config_flags(thv_config_t* cfg) {
 }
 
 int hv_start(hv_state_t* hv) {
+    UINT64 config_hash_now;
+
     if (!hv || !hv->initialized) return STATUS_INVALID_PARAMETER;
+    config_hash_now = hv_hash64(&hv->active_config, sizeof(hv->active_config), 0x4346475f48415348ull);
+    if (config_hash_now != hv->config_integrity_hash) {
+        hv_log("[integrity] runtime config hash changed old=0x%llx new=0x%llx\n", hv->config_integrity_hash, config_hash_now);
+        hv->config_integrity_hash = config_hash_now;
+    }
+
     // per-cpu launch (skeleton)
     for (ULONG i = 0; i < hv->cpu_count; ++i) {
+        NTSTATUS st;
         if (hv->cpus[i].launch_failures >= hv_launch_fail_limit) {
             hv_log("[launch] cpu %lu blocked by watchdog (failures=%lu)\n",
                    i, hv->cpus[i].launch_failures);
             return STATUS_DEVICE_HARDWARE_ERROR;
         }
-        if (hv->cpu_vendor == HV_CPU_VENDOR_INTEL) {
-            if (!hv->cpus[i].vmx.vmx_on || !hv->cpus[i].vmx.vmcs_loaded) return STATUS_INVALID_DEVICE_STATE;
-            int st = vmx_launch(&hv->cpus[i].vmx);
-            if (st != STATUS_SUCCESS) {
-                hv_record_launch_failure(&hv->cpus[i], st);
-                hv_stop(hv);
-                return st;
-            }
-        } else if (hv->cpu_vendor == HV_CPU_VENDOR_AMD) {
-            if (!hv->cpus[i].svm.svm_on) return STATUS_INVALID_DEVICE_STATE;
-            int st = svm_launch(&hv->cpus[i].svm);
-            if (st != STATUS_SUCCESS) {
-                hv_record_launch_failure(&hv->cpus[i], st);
-                hv_stop(hv);
-                return st;
-            }
+        st = hv_launch_cpu_with_retry(hv, i);
+        if (!NT_SUCCESS(st)) {
+            hv_capture_panic_vmexit_snapshots(hv);
+            hv_stop(hv);
+            return st;
         }
-        hv->cpus[i].last_launch_status = STATUS_SUCCESS;
-        hv->cpus[i].last_launch_time = hv_now_ticks();
-        hv->cpus[i].launched = 1;
     }
     return STATUS_SUCCESS;
 }
@@ -456,6 +537,7 @@ int hv_stop(hv_state_t* hv) {
 void hv_shutdown(hv_state_t* hv) {
     if (!hv) return;
     hv_stop(hv);
+    hv_gpa_map_export_shutdown();
     hv_trace_global_shutdown();
     hv_stats_export_shutdown();
     if (hv->dpcs) {
@@ -467,6 +549,9 @@ void hv_shutdown(hv_state_t* hv) {
         hv_free_page_aligned(hv->cpus, 'vHVT');
         hv->cpus = NULL;
     }
+    hv->handoff_integrity_hash = 0;
+    hv->config_integrity_hash = 0;
+    hv->panic_vmexit_snapshot_count = 0;
     hv->cpu_count = 0;
     hv->initialized = 0;
 }
