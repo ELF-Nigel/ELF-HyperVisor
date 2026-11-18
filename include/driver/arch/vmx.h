@@ -26,6 +26,7 @@ typedef struct vmx_state_t {
     void* vmcs_region;
     PHYSICAL_ADDRESS vmcs_pa;
     UINT64 guest_cr3;
+    ULONG vmcs_revision;
     int vmx_on;
     int vmcs_loaded;
 } vmx_state_t;

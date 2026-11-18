@@ -6,6 +6,7 @@
 #include "driver/util/alloc.h"
 #include "driver/util/regs.h"
 #include <intrin.h>
+#include "public/hv_runtime_checks.h"
 
 #define MSR_EFER 0xC0000080
 #define EFER_SVME (1ULL << 12)
@@ -19,6 +20,20 @@ int svm_check_support(void) {
 int svm_init(svm_state_t* st) {
     if (!st) return STATUS_INVALID_PARAMETER;
     if (!svm_check_support()) return STATUS_NOT_SUPPORTED;
+    {
+        int cpu[4];
+        __cpuid(cpu, (int)0x80000000);
+        if ((ULONG)cpu[0] < 0x8000000a) return STATUS_NOT_SUPPORTED;
+        __cpuid(cpu, (int)0x8000000a);
+        if (!hv_svm_revision_valid((ULONG)cpu[0], (ULONG)cpu[1]) ||
+            (st->npt_enabled && !(cpu[3] & 1))) {
+            hv_log("[svm] unsupported vmcb layout: revision=%lu asids=%lu\n",
+                (ULONG)cpu[0], (ULONG)cpu[1]);
+            return STATUS_REVISION_MISMATCH;
+        }
+        st->svm_revision = (ULONG)cpu[0];
+        st->asid_count = (ULONG)cpu[1];
+    }
 
     if (st->svm_on) return STATUS_ALREADY_COMPLETE;
     st->vmcb = hv_alloc_page_aligned(PAGE_SIZE, 'bcmV');

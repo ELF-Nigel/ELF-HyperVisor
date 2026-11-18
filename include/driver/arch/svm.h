@@ -12,6 +12,8 @@ typedef struct svm_state_t {
     UINT64 guest_cr2;
     UINT64 guest_cr4;
     UINT64 guest_efer;
+    ULONG svm_revision;
+    ULONG asid_count;
     svm_npt_tables_t npt;
     int npt_enabled;
     int svm_on;

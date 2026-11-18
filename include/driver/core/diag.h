@@ -4,6 +4,7 @@
 #include "driver/arch/vmx.h"
 #include "driver/arch/svm.h"
 #include "driver/core/stats.h"
+#include "public/hv_trace_codec.h"
 
 void hv_dump_vmx(vmx_state_t* st);
 void hv_dump_svm(svm_state_t* st);
@@ -48,6 +49,8 @@ int hv_trace_init(hv_trace_ring_t* r, ULONG capacity);
 void hv_trace_shutdown(hv_trace_ring_t* r);
 void hv_trace_push(hv_trace_ring_t* r, ULONG64 reason, ULONG cpu);
 ULONG hv_trace_read(hv_trace_ring_t* r, hv_trace_event_t* out, ULONG max_count);
+NTSTATUS hv_trace_read_encoded(hv_trace_ring_t* r, void* out, SIZE_T size,
+    ULONG encoding, SIZE_T* written);
 void hv_trace_reset(hv_trace_ring_t* r);
 ULONG hv_trace_capacity(hv_trace_ring_t* r);
 ULONG hv_trace_count(hv_trace_ring_t* r);

@@ -6,6 +6,7 @@
 #include "driver/util/log.h"
 #include <intrin.h>
 #include <string.h>
+#include "public/hv_runtime_checks.h"
 
 hv_stats_t g_hv_stats = {0};
 
@@ -239,16 +240,20 @@ static ULONG hv_get_cpu_count(void) {
     return KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
 }
 
-static void hv_set_thread_affinity(ULONG cpu_index, GROUP_AFFINITY* prev) {
+static NTSTATUS hv_set_thread_affinity(ULONG cpu_index, GROUP_AFFINITY* prev) {
     GROUP_AFFINITY ga;
+    PROCESSOR_NUMBER number;
+    NTSTATUS status = KeGetProcessorNumberFromIndex(cpu_index, &number);
+    if (!NT_SUCCESS(status)) return status;
     RtlZeroMemory(&ga, sizeof(ga));
-    ga.Group = (USHORT)(cpu_index / 64);
-    ga.Mask = 1ULL << (cpu_index % 64);
+    ga.Group = number.Group;
+    ga.Mask = 1ULL << number.Number;
     KeSetSystemGroupAffinityThread(&ga, prev);
+    return STATUS_SUCCESS;
 }
 
 static void hv_restore_thread_affinity(GROUP_AFFINITY* prev) {
-    if (prev) KeSetSystemGroupAffinityThread(prev, NULL);
+    if (prev) KeRevertToUserGroupAffinityThread(prev);
 }
 
 static hv_cpu_vendor_t hv_detect_cpu_vendor(void) {
@@ -311,11 +316,40 @@ int hv_init(hv_state_t* hv) {
     hv_gpa_map_export_init(L"\\BaseNamedObjects\\elfhvGpaMap", 256);
     hv_gpa_map_export_refresh();
 
+    // inspect every cpu before enabling virtualization on any cpu.
+    hv->feature_mismatch_count = 0;
+    hv->common_features = MAXULONG;
+    for (ULONG i = 0; i < hv->cpu_count; ++i) {
+        GROUP_AFFINITY prev_affinity;
+        st = hv_set_thread_affinity(i, &prev_affinity);
+        if (!NT_SUCCESS(st)) { hv_shutdown(hv); return st; }
+        hv->cpus[i].detected_vendor = (ULONG)hv_detect_cpu_vendor();
+        hv->cpus[i].feature_mask = hv_query_features_auto();
+        hv_restore_thread_affinity(&prev_affinity);
+        if (i == 0) hv->baseline_features = hv->cpus[i].feature_mask;
+        hv->cpus[i].feature_mismatch = hv_feature_mismatch(
+            hv->baseline_features, hv->cpus[i].feature_mask);
+        hv->common_features &= hv->cpus[i].feature_mask;
+        if (hv->cpus[i].feature_mismatch || hv->cpus[i].detected_vendor != (ULONG)hv->cpu_vendor) {
+            ++hv->feature_mismatch_count;
+            hv_log("[features] cpu=%lu vendor=%lu baseline=0x%lx actual=0x%lx mismatch=0x%lx\n",
+                i, hv->cpus[i].detected_vendor, hv->baseline_features,
+                hv->cpus[i].feature_mask, hv->cpus[i].feature_mismatch);
+        }
+    }
+    hv_log("[features] cpus=%lu mismatches=%lu common=0x%lx\n",
+        hv->cpu_count, hv->feature_mismatch_count, hv->common_features);
+    if (hv->feature_mismatch_count) {
+        hv_shutdown(hv);
+        return STATUS_NOT_SUPPORTED;
+    }
+
     for (ULONG i = 0; i < hv->cpu_count; ++i) {
         int ping = hv_dpc_ping_cpu(&hv->dpcs[i], 1000);
         if (ping != STATUS_SUCCESS) { hv_stop(hv); return ping; }
         GROUP_AFFINITY prev_affinity;
-        hv_set_thread_affinity(i, &prev_affinity);
+        st = hv_set_thread_affinity(i, &prev_affinity);
+        if (!NT_SUCCESS(st)) { hv_stop(hv); return st; }
 
         hv->cpus[i].cpu_id = (int)i;
         hv_cpu_snapshot(&hv->cpus[i]);
@@ -375,13 +409,28 @@ ULONG hv_query_features(hv_state_t* hv) {
 ULONG hv_query_features_auto(void) {
     int cpu[4] = {0};
     ULONG f = 0;
-    __cpuid(cpu, 1);
-    if (cpu[2] & (1 << 5)) f |= HV_FEAT_VMX;
-    if (cpu[2] & (1 << 6)) f |= HV_FEAT_VPID;
-    __cpuid(cpu, 0x80000001);
-    if (cpu[2] & (1 << 2)) f |= HV_FEAT_SVM;
-    if (f & HV_FEAT_VMX) f |= HV_FEAT_EPT;
-    if (f & HV_FEAT_SVM) f |= HV_FEAT_NPT;
+    hv_cpu_vendor_t vendor = hv_detect_cpu_vendor();
+    if (vendor == HV_CPU_VENDOR_INTEL) {
+        __cpuid(cpu, 1);
+        if (cpu[2] & (1 << 5)) {
+            ULONG64 primary = __readmsr(0x482);
+            f |= HV_FEAT_VMX;
+            if (primary & (1ull << 63)) {
+                ULONG64 secondary = __readmsr(0x48b);
+                if (secondary & (1ull << 33)) f |= HV_FEAT_EPT;
+                if (secondary & (1ull << 37)) f |= HV_FEAT_VPID;
+            }
+        }
+    } else if (vendor == HV_CPU_VENDOR_AMD) {
+        __cpuid(cpu, (int)0x80000000);
+        if ((ULONG)cpu[0] < 0x8000000a) return 0;
+        __cpuid(cpu, (int)0x80000001);
+        if (cpu[2] & (1 << 2)) {
+            f |= HV_FEAT_SVM;
+            __cpuid(cpu, (int)0x8000000a);
+            if (cpu[3] & 1) f |= HV_FEAT_NPT;
+        }
+    }
     return f;
 }
 

@@ -103,11 +103,11 @@ See `docs/README.md` for full documentation.
 - [x] add static analyzer annotations for driver entry and memory map helpers.
 - [x] add per-cpu vmexit ring snapshots on panic.
 - [x] add low-memory fallback path for alloc helpers.
-- add trace ring compression option (delta-encoded timestamps).
-- add module signature whitelist for resolver framework.
-- add vmcs/vmcb version detection sanity check.
-- add per-cpu feature mismatch report at init.
-- add secure wipe for shared sections on shutdown.
+- [x] add trace ring snapshot compression option (delta-encoded timestamps).
+- [x] add module signature whitelist for resolver framework.
+- [x] add vmcs/vmcb version detection sanity check.
+- [x] add per-cpu feature mismatch report at init.
+- [x] add secure wipe for shared sections on shutdown.
 - add hv self-test mode (minimal vmexit smoke test).
 - add vmexit reason allow/deny policy table.
 - add per-cpu stats sampling interval config.
@@ -118,6 +118,9 @@ See `docs/README.md` for full documentation.
 - add optional debug pause on bootloader menu.
 
 ## Ideas (Future Additions)
+
+see [runtime diagnostics](docs/runtime_diagnostics.md) for the new interfaces,
+snapshot format, whitelist policy, and validation limits.
 - vmcs/vmcb field dump helpers with typed accessors.
 - ept/npt split large-page helpers (2MB/1GB).
 - cpuid/msr/io intercept policy tables with allow/deny modes.

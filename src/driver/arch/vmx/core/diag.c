@@ -23,8 +23,10 @@ typedef struct hv_trace_export_header_t {
 hv_trace_ring_t g_hv_trace = {0};
 static HANDLE g_stats_section = NULL;
 static void* g_stats_view = NULL;
+static SIZE_T g_stats_size = 0;
 static HANDLE g_gpa_map_section = NULL;
 static void* g_gpa_map_view = NULL;
+static SIZE_T g_gpa_map_size = 0;
 static ULONG g_gpa_map_max_ranges = 0;
 static ULONG64 g_trace_last_tsc[256] = {0};
 
@@ -134,6 +136,7 @@ int hv_trace_export_init(hv_trace_ring_t* r, ULONG capacity, PCWSTR name) {
 void hv_trace_export_shutdown(hv_trace_ring_t* r) {
     if (!r) return;
     if (r->export_view) {
+        RtlSecureZeroMemory(r->export_view, r->export_size);
         MmUnmapViewInSystemSpace(r->export_view);
         r->export_view = NULL;
     }
@@ -148,6 +151,7 @@ void hv_trace_shutdown(hv_trace_ring_t* r) {
     if (!r) return;
     hv_trace_export_shutdown(r);
     if (r->events) {
+        RtlSecureZeroMemory(r->events, sizeof(hv_trace_event_t) * r->capacity);
         hv_free_page_aligned(r->events, 'rhvT');
         r->events = NULL;
     }
@@ -196,7 +200,8 @@ void hv_trace_push(hv_trace_ring_t* r, ULONG64 reason, ULONG cpu) {
 
 ULONG hv_trace_read(hv_trace_ring_t* r, hv_trace_event_t* out, ULONG max_count) {
     if (!r || !r->events || !out || max_count == 0) return 0;
-    ULONG count = (r->capacity < max_count) ? r->capacity : max_count;
+    ULONG available = hv_trace_count(r);
+    ULONG count = (available < max_count) ? available : max_count;
     LONG64 head = r->head;
     ULONG start = (ULONG)((head > (LONG64)count) ? (head - count) : 0);
     for (ULONG i = 0; i < count; ++i) {
@@ -204,6 +209,43 @@ ULONG hv_trace_read(hv_trace_ring_t* r, hv_trace_event_t* out, ULONG max_count) 
         out[i] = r->events[idx];
     }
     return count;
+}
+
+NTSTATUS hv_trace_read_encoded(hv_trace_ring_t* r, void* out, SIZE_T size,
+    ULONG encoding, SIZE_T* written) {
+    hv_trace_stream_header_t header = {1, encoding, 0, 0};
+    uint64_t previous = 0;
+    SIZE_T offset = sizeof(header);
+    LONG64 head;
+    ULONG count;
+    if (written) *written = 0;
+    if (!r || !r->events || !out || !written ||
+        (encoding != HV_TRACE_ENCODING_RAW && encoding != HV_TRACE_ENCODING_DELTA))
+        return STATUS_INVALID_PARAMETER;
+    if (size < sizeof(header)) return STATUS_BUFFER_TOO_SMALL;
+    // producers must be stopped while taking this snapshot.
+    head = r->head;
+    count = hv_trace_count(r);
+    for (ULONG i = 0; i < count; ++i) {
+        ULONG slot = (ULONG)((head - count + i) % r->capacity);
+        hv_trace_event_t* event = &r->events[slot];
+        SIZE_T n = sizeof(*event);
+        if (encoding == HV_TRACE_ENCODING_DELTA) {
+            n = hv_trace_encode_event((uint8_t*)out + offset, size - offset,
+                &previous, event->tsc, event->reason, event->cpu);
+            if (!n) return STATUS_BUFFER_TOO_SMALL;
+        } else {
+            if (size - offset < n) return STATUS_BUFFER_TOO_SMALL;
+            RtlCopyMemory((uint8_t*)out + offset, event, n);
+        }
+        offset += n;
+        if (offset - sizeof(header) > MAXULONG) return STATUS_INTEGER_OVERFLOW;
+    }
+    header.count = count;
+    header.payload_size = (uint32_t)(offset - sizeof(header));
+    RtlCopyMemory(out, &header, sizeof(header));
+    *written = offset;
+    return STATUS_SUCCESS;
 }
 
 void hv_trace_reset(hv_trace_ring_t* r) {
@@ -336,6 +378,7 @@ int hv_gpa_map_export_init(PCWSTR name, ULONG max_ranges) {
     }
 
     g_gpa_map_max_ranges = max_ranges;
+    g_gpa_map_size = size;
     RtlZeroMemory(g_gpa_map_view, size);
     hv_gpa_export_header()->version = 1;
     hv_gpa_export_header()->max_ranges = max_ranges;
@@ -345,6 +388,7 @@ int hv_gpa_map_export_init(PCWSTR name, ULONG max_ranges) {
 
 void hv_gpa_map_export_shutdown(void) {
     if (g_gpa_map_view) {
+        RtlSecureZeroMemory(g_gpa_map_view, g_gpa_map_size);
         MmUnmapViewInSystemSpace(g_gpa_map_view);
         g_gpa_map_view = NULL;
     }
@@ -353,6 +397,7 @@ void hv_gpa_map_export_shutdown(void) {
         g_gpa_map_section = NULL;
     }
     g_gpa_map_max_ranges = 0;
+    g_gpa_map_size = 0;
 }
 
 void hv_gpa_map_export_refresh(void) {
@@ -444,12 +489,14 @@ int hv_stats_export_init(PCWSTR name) {
         return st;
     }
     RtlZeroMemory(g_stats_view, size);
+    g_stats_size = size;
     ((hv_stats_export_t*)g_stats_view)->version = 1;
     return STATUS_SUCCESS;
 }
 
 void hv_stats_export_shutdown(void) {
     if (g_stats_view) {
+        RtlSecureZeroMemory(g_stats_view, g_stats_size);
         MmUnmapViewInSystemSpace(g_stats_view);
         g_stats_view = NULL;
     }
@@ -457,6 +504,7 @@ void hv_stats_export_shutdown(void) {
         ZwClose(g_stats_section);
         g_stats_section = NULL;
     }
+    g_stats_size = 0;
 }
 
 void hv_stats_export_inc_reason(ULONG reason) {

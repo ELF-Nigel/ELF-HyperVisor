@@ -10,6 +10,7 @@
 #include "driver/util/ringlog.h"
 #include "driver/core/vmexit.h"
 #include "driver/core/diag.h"
+#include "public/hv_runtime_checks.h"
 extern hv_stats_t g_hv_stats;
 
 #define IA32_FEATURE_CONTROL 0x3A
@@ -72,7 +73,8 @@ static int vmx_enable_vmx(void) {
 static int vmx_vmxon(vmx_state_t* st) {
     if (!st || !st->vmxon_region) return 0;
     ULONG64 basic = __readmsr(IA32_VMX_BASIC);
-    *(ULONG32*)st->vmxon_region = (ULONG32)(basic & 0xFFFFFFFF);
+    if (!hv_vmx_basic_valid(basic) || (ULONG)(basic & 0x7fffffff) != st->vmcs_revision) return 0;
+    *(ULONG32*)st->vmxon_region = st->vmcs_revision;
     return __vmx_on(&st->vmxon_pa.QuadPart) == 0;
 }
 
@@ -83,6 +85,14 @@ static void vmx_vmxoff(void) {
 int vmx_init(vmx_state_t* st) {
     if (!st) return STATUS_INVALID_PARAMETER;
     if (!vmx_check_support()) return STATUS_NOT_SUPPORTED;
+    {
+        ULONG64 basic = __readmsr(IA32_VMX_BASIC);
+        if (!hv_vmx_basic_valid(basic)) {
+            hv_log("[vmx] unsupported vmcs layout: basic=0x%llx\n", basic);
+            return STATUS_REVISION_MISMATCH;
+        }
+        st->vmcs_revision = (ULONG)(basic & 0x7fffffff);
+    }
 
     if (!vmx_alloc_region(&st->vmxon_region_raw, &st->vmxon_region, &st->vmxon_pa))
         return STATUS_INSUFFICIENT_RESOURCES;
@@ -143,7 +153,9 @@ int vmx_setup_vmcs(vmx_state_t* st) {
     if (!st || !st->vmcs_region) return STATUS_INVALID_PARAMETER;
 
     ULONG64 basic = __readmsr(IA32_VMX_BASIC);
-    *(ULONG32*)st->vmcs_region = (ULONG32)(basic & 0xFFFFFFFF);
+    if (!hv_vmx_basic_valid(basic) || (ULONG)(basic & 0x7fffffff) != st->vmcs_revision)
+        return STATUS_REVISION_MISMATCH;
+    *(ULONG32*)st->vmcs_region = st->vmcs_revision;
 
     if (__vmx_vmclear(&st->vmcs_pa.QuadPart) != 0) return STATUS_UNSUCCESSFUL;
     if (__vmx_vmptrld(&st->vmcs_pa.QuadPart) != 0) return STATUS_UNSUCCESSFUL;

@@ -17,6 +17,12 @@ jobs:
           echo int main(){return 0;} >> test.cpp
           cl /nologo /W4 /EHsc /D elfhv_usermode /I include /I include\public test.cpp src\api\elfhv.c
           cl /nologo /W4 /I include /I include\public src\tools\hvctl.c
+      - name: runtime tests
+        shell: cmd
+        run: |
+          cl /nologo /W4 /WX /D elfhv_usermode /I include tests\runtime_tests.c src\driver\hooks\resolver.c /Fe:runtime_tests.exe bcrypt.lib
+          if errorlevel 1 exit /b 1
+          runtime_tests.exe
 
   build-efi:
     if: github.actor != 'github-actions[bot]'
@@ -57,9 +63,10 @@ jobs:
           mkdir -p build
           cp -p Build/elfhvPkg/RELEASE_GCC5/X64/*.efi build/elfhv.efi
       - name: commit efi build
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           git config user.name "ELF-Nigel"
-          git config user.email "ELF-Nigel@users.noreply.github.com"
+          git config user.email "254270454+ELF-Nigel@users.noreply.github.com"
           git add build/elfhv.efi
           if git diff --cached --quiet; then
             echo "no efi changes to commit"

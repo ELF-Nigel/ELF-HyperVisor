@@ -16,6 +16,7 @@
 #include "driver/core/handoff.h"
 #include "driver/core/dpc.h"
 #include "driver/core/feature.h"
+#include "public/hv_resolver.h"
 
 typedef struct hv_launch_failure_dump_t {
     NTSTATUS last_error;
@@ -44,6 +45,9 @@ typedef struct hv_cpu_t {
     ULONG64 cr4;
     ULONG64 efer;
     hv_launch_failure_dump_t failure_dump;
+    ULONG feature_mask;
+    ULONG feature_mismatch;
+    ULONG detected_vendor;
 } hv_cpu_t;
 
 typedef enum hv_cpu_vendor_t {
@@ -55,6 +59,9 @@ typedef enum hv_cpu_vendor_t {
 typedef struct hv_state_t {
     hv_cpu_t* cpus;
     ULONG cpu_count;
+    ULONG baseline_features;
+    ULONG common_features;
+    ULONG feature_mismatch_count;
     int initialized;
     hv_cpu_vendor_t cpu_vendor;
     thv_handoff_t handoff;
