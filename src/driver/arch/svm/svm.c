@@ -3,6 +3,7 @@
 #include "driver/util/log.h"
 #include "driver/core/vmexit.h"
 #include "driver/core/diag.h"
+#include "driver/core/runtime_control.h"
 #include "driver/util/alloc.h"
 #include "driver/util/regs.h"
 #include <intrin.h>
@@ -112,6 +113,7 @@ static ULONG64 svm_read_exit_code(const svm_state_t* st) {
 
 void svm_vmexit_dispatch(svm_state_t* st) {
     ULONG64 reason = svm_read_exit_code(st);
+    if (!hv_vmexit_filter(HV_EXIT_SVM, reason)) return;
     if (reason == 0) hv_log("svm vmexit\n");
     PROCESSOR_NUMBER pn;
     KeGetCurrentProcessorNumberEx(&pn);

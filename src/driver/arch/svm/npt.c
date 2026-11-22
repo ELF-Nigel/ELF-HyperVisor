@@ -2,6 +2,7 @@
 #include "driver/arch/npt.h"
 #include "driver/arch/svm.h"
 #include "driver/util/alloc.h"
+#include "driver/core/page_audit.h"
 
 static int svm_npt_alloc_table_page(void** out, ULONG tag) {
     *out = hv_alloc_page_aligned(PAGE_SIZE, tag);
@@ -278,6 +279,7 @@ int svm_npt_set_rw(svm_npt_tables_t* npt, UINT64 gpa, int read, int write) {
     if (!pte) return STATUS_UNSUCCESSFUL;
     pte->Fields.Valid = (read || write) ? 1 : 0;
     pte->Fields.Write = (write != 0);
+    hv_debug_audit_page(HV_EXIT_SVM, npt->pml4, gpa);
     svm_invlpga(gpa, 0);
     return STATUS_SUCCESS;
 }
@@ -286,6 +288,7 @@ int svm_npt_set_exec(svm_npt_tables_t* npt, UINT64 gpa, int exec) {
     PPT_Entry pte = svm_get_npt_pte_for_gpa(npt, gpa);
     if (!pte) return STATUS_UNSUCCESSFUL;
     pte->Fields.NoExecute = exec ? 0 : 1;
+    hv_debug_audit_page(HV_EXIT_SVM, npt->pml4, gpa);
     svm_invlpga(gpa, 0);
     return STATUS_SUCCESS;
 }

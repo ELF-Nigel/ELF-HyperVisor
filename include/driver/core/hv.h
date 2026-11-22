@@ -17,6 +17,7 @@
 #include "driver/core/dpc.h"
 #include "driver/core/feature.h"
 #include "public/hv_resolver.h"
+#include "driver/core/runtime_control.h"
 
 typedef struct hv_launch_failure_dump_t {
     NTSTATUS last_error;
@@ -78,6 +79,7 @@ typedef struct hv_state_t {
 } hv_state_t;
 
 int hv_init(hv_state_t* hv);
+int hv_init_ex(hv_state_t* hv, const hv_runtime_config_t* runtime_config);
 int hv_start(hv_state_t* hv);
 int hv_stop(hv_state_t* hv);
 void hv_shutdown(hv_state_t* hv);

@@ -1,6 +1,7 @@
 // ept.c - ept skeleton (annotated)
 #include "driver/arch/ept.h"
 #include "driver/util/alloc.h"
+#include "driver/core/page_audit.h"
 
 int ept_init(ept_state_t* ept) {
     if (!ept) return STATUS_INVALID_PARAMETER;
@@ -32,6 +33,7 @@ void ept_shutdown(ept_state_t* ept) {
 int ept_set_rw(ept_state_t* ept, UINT64 gpa, int read, int write) {
     if (!ept || !ept->pml4) return STATUS_INVALID_PARAMETER;
     if (gpa == 0) return STATUS_INVALID_PARAMETER;
+    hv_debug_audit_page(HV_EXIT_VMX, ept->pml4, gpa);
     // layout:
     // 1) locate pml4/pdpt/pd/pt entry for gpa
     // 2) set read/write bits based on input
@@ -44,6 +46,7 @@ int ept_set_rw(ept_state_t* ept, UINT64 gpa, int read, int write) {
 int ept_set_exec(ept_state_t* ept, UINT64 gpa, int exec) {
     if (!ept || !ept->pml4) return STATUS_INVALID_PARAMETER;
     if (gpa == 0) return STATUS_INVALID_PARAMETER;
+    hv_debug_audit_page(HV_EXIT_VMX, ept->pml4, gpa);
     // layout:
     // 1) locate pml4/pdpt/pd/pt entry for gpa
     // 2) set/clear execute bit

@@ -23,6 +23,27 @@ jobs:
           cl /nologo /W4 /WX /D elfhv_usermode /I include tests\runtime_tests.c src\driver\hooks\resolver.c /Fe:runtime_tests.exe bcrypt.lib
           if errorlevel 1 exit /b 1
           runtime_tests.exe
+      - name: exit feature tests and self-test tool
+        shell: cmd
+        run: |
+          cl /nologo /W4 /WX /DDBG=0 /I include tests\exit_feature_tests.c src\driver\hv\exit_runtime.c src\driver\hv\page_audit.c /Fe:exit_tests_release.exe
+          if errorlevel 1 exit /b 1
+          exit_tests_release.exe
+          if errorlevel 1 exit /b 1
+          cl /nologo /W4 /WX /DDBG=1 /I include tests\exit_feature_tests.c src\driver\hv\exit_runtime.c src\driver\hv\page_audit.c /Fe:exit_tests_debug.exe
+          if errorlevel 1 exit /b 1
+          exit_tests_debug.exe
+          if errorlevel 1 exit /b 1
+          cl /nologo /W4 /WX /I include src\tools\hvselftest.c src\driver\hv\exit_runtime.c /Fe:hvselftest.exe
+          if errorlevel 1 exit /b 1
+          hvselftest.exe
+      - name: upload tools
+        uses: actions/upload-artifact@v4
+        with:
+          name: elfhv-tools
+          path: |
+            hvctl.exe
+            hvselftest.exe
 
   build-efi:
     if: github.actor != 'github-actions[bot]'

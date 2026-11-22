@@ -270,9 +270,15 @@ static hv_cpu_vendor_t hv_detect_cpu_vendor(void) {
 }
 
 int hv_init(hv_state_t* hv) {
+    hv_runtime_config_t config;
+    hv_runtime_config_defaults(&config);
+    return hv_init_ex(hv, &config);
+}
+
+int hv_init_ex(hv_state_t* hv, const hv_runtime_config_t* runtime_config) {
     NTSTATUS st;
 
-    if (!hv) return STATUS_INVALID_PARAMETER;
+    if (!hv || !runtime_config) return STATUS_INVALID_PARAMETER;
     if (hv->initialized) return STATUS_ALREADY_COMPLETE;
 
     st = hv_run_selftests();
@@ -311,6 +317,17 @@ int hv_init(hv_state_t* hv) {
     RtlZeroMemory(hv->dpcs, sizeof(hv_dpc_t) * hv->cpu_count);
     hv_dpc_init(hv->dpcs, hv->cpu_count);
 
+    st = hv_vmexit_runtime_init(hv->cpu_count, runtime_config);
+    if (!NT_SUCCESS(st)) {
+        hv_dpc_shutdown(hv->dpcs, hv->cpu_count);
+        hv_free_page_aligned(hv->dpcs, 'cDpH');
+        hv_free_page_aligned(hv->cpus, 'vHVT');
+        hv->dpcs = NULL;
+        hv->cpus = NULL;
+        hv->cpu_count = 0;
+        return st;
+    }
+
     hv_trace_global_init(4096);
     hv_stats_export_init(L"\\BaseNamedObjects\\elfhvStats");
     hv_gpa_map_export_init(L"\\BaseNamedObjects\\elfhvGpaMap", 256);
@@ -346,27 +363,27 @@ int hv_init(hv_state_t* hv) {
 
     for (ULONG i = 0; i < hv->cpu_count; ++i) {
         int ping = hv_dpc_ping_cpu(&hv->dpcs[i], 1000);
-        if (ping != STATUS_SUCCESS) { hv_stop(hv); return ping; }
+        if (ping != STATUS_SUCCESS) { hv_vmexit_runtime_shutdown(); hv_stop(hv); return ping; }
         GROUP_AFFINITY prev_affinity;
         st = hv_set_thread_affinity(i, &prev_affinity);
-        if (!NT_SUCCESS(st)) { hv_stop(hv); return st; }
+        if (!NT_SUCCESS(st)) { hv_vmexit_runtime_shutdown(); hv_stop(hv); return st; }
 
         hv->cpus[i].cpu_id = (int)i;
         hv_cpu_snapshot(&hv->cpus[i]);
         if (hv->cpu_vendor == HV_CPU_VENDOR_INTEL) {
             int st = vmx_init(&hv->cpus[i].vmx);
-            if (st != STATUS_SUCCESS) { hv_restore_thread_affinity(&prev_affinity); hv_stop(hv); return st; }
+            if (st != STATUS_SUCCESS) { hv_restore_thread_affinity(&prev_affinity); hv_vmexit_runtime_shutdown(); hv_stop(hv); return st; }
             if (hv->ept_enabled) {
                 st = ept_init(&hv->cpus[i].ept);
-                if (st != STATUS_SUCCESS) { vmx_shutdown(&hv->cpus[i].vmx); hv_restore_thread_affinity(&prev_affinity); hv_stop(hv); return st; }
+                if (st != STATUS_SUCCESS) { vmx_shutdown(&hv->cpus[i].vmx); hv_restore_thread_affinity(&prev_affinity); hv_vmexit_runtime_shutdown(); hv_stop(hv); return st; }
             }
             st = vmx_setup_vmcs(&hv->cpus[i].vmx);
-            if (st != STATUS_SUCCESS) { ept_shutdown(&hv->cpus[i].ept); vmx_shutdown(&hv->cpus[i].vmx); hv_restore_thread_affinity(&prev_affinity); hv_stop(hv); return st; }
+            if (st != STATUS_SUCCESS) { ept_shutdown(&hv->cpus[i].ept); vmx_shutdown(&hv->cpus[i].vmx); hv_restore_thread_affinity(&prev_affinity); hv_vmexit_runtime_shutdown(); hv_stop(hv); return st; }
         } else if (hv->cpu_vendor == HV_CPU_VENDOR_AMD) {
             hv->cpus[i].svm.npt_enabled = hv->npt_enabled ? 1 : 0;
             int st = svm_init(&hv->cpus[i].svm);
-            if (st != STATUS_SUCCESS) { hv_restore_thread_affinity(&prev_affinity); hv_stop(hv); return st; }
-            if (!hv->cpus[i].svm.npt.pml4 || !hv->cpus[i].svm.npt.pdp) { hv_restore_thread_affinity(&prev_affinity); hv_stop(hv); return STATUS_INSUFFICIENT_RESOURCES; }
+            if (st != STATUS_SUCCESS) { hv_restore_thread_affinity(&prev_affinity); hv_vmexit_runtime_shutdown(); hv_stop(hv); return st; }
+            if (!hv->cpus[i].svm.npt.pml4 || !hv->cpus[i].svm.npt.pdp) { hv_restore_thread_affinity(&prev_affinity); hv_vmexit_runtime_shutdown(); hv_stop(hv); return STATUS_INSUFFICIENT_RESOURCES; }
         }
         hv_restore_thread_affinity(&prev_affinity);
     }
@@ -586,6 +603,7 @@ int hv_stop(hv_state_t* hv) {
 void hv_shutdown(hv_state_t* hv) {
     if (!hv) return;
     hv_stop(hv);
+    hv_vmexit_runtime_shutdown();
     hv_gpa_map_export_shutdown();
     hv_trace_global_shutdown();
     hv_stats_export_shutdown();

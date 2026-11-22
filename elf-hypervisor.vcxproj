@@ -43,6 +43,10 @@
     <ClCompile Include="src/driver/hv/handoff.c" />
     <ClCompile Include="src/driver/hv/translate.c" />
     <ClCompile Include="src/driver/hv/stats.c" />
+    <ClCompile Include="src/driver/hv/exit_runtime.c" />
+    <ClCompile Include="src/driver/hv/runtime_control.c" />
+    <ClCompile Include="src/driver/hv/page_audit.c" />
+    <ClCompile Include="src/driver/hv/page_audit_kernel.c" />
     <ClCompile Include="src/driver/hv/cpuid.c" />
     <ClCompile Include="src/driver/hv/msr.c" />
     <ClCompile Include="src/driver/hv/control_reg.c" />
@@ -72,6 +76,10 @@
     <ClInclude Include="include/public/hv_resolver.h" />
     <ClInclude Include="include/public/hv_runtime_checks.h" />
     <ClInclude Include="include/public/hv_trace_codec.h" />
+    <ClInclude Include="include/public/hv_exit_runtime.h" />
+    <ClInclude Include="include/public/hv_page_audit.h" />
+    <ClInclude Include="include/driver/core/runtime_control.h" />
+    <ClInclude Include="include/driver/core/page_audit.h" />
     <ClInclude Include="include/public/hv_control.h" />
     <ClInclude Include="include/driver/core/hv.h" />
     <ClInclude Include="include/driver/core/state.h" />

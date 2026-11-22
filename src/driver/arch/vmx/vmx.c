@@ -10,6 +10,7 @@
 #include "driver/util/ringlog.h"
 #include "driver/core/vmexit.h"
 #include "driver/core/diag.h"
+#include "driver/core/runtime_control.h"
 #include "public/hv_runtime_checks.h"
 extern hv_stats_t g_hv_stats;
 
@@ -227,6 +228,7 @@ int vmx_invvpid_single(UINT16 vpid) {
 void vmexit_dispatch(void) {
     ULONG64 reason = 0;
     __vmx_vmread(VM_EXIT_REASON, &reason); // VM_EXIT_REASON
+    if (!hv_vmexit_filter(HV_EXIT_VMX, reason)) return;
 
     hv_stats_on_vmexit(reason);
     hv_stats_export_inc_vmexit();

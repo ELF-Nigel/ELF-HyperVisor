@@ -4,6 +4,10 @@ Developed by Nigel
 See `docs/README.md` for full documentation.
 
 ## Temporary Changelog
+- added an opt-in software vmexit smoke test and `hvselftest` tool.
+- added a native-reason vmexit allow/deny policy table.
+- added per-cpu stats snapshot sampling intervals.
+- added debug-only ept/npt permission audit logging.
 - per-vcpu initialization now happens before `hv_start`, with hard-fail on any vcpu init failure.
 - page-aligned allocation helpers added, plus guards for alignment and zero physical addresses.
 - cpu vendor detection (intel/amd) gates vmx/svm paths.
@@ -108,10 +112,10 @@ See `docs/README.md` for full documentation.
 - [x] add vmcs/vmcb version detection sanity check.
 - [x] add per-cpu feature mismatch report at init.
 - [x] add secure wipe for shared sections on shutdown.
-- add hv self-test mode (minimal vmexit smoke test).
-- add vmexit reason allow/deny policy table.
-- add per-cpu stats sampling interval config.
-- add ept/npt page permission audit logger (debug-only).
+- [x] add hv self-test mode (software vmexit smoke test).
+- [x] add vmexit reason allow/deny policy table.
+- [x] add per-cpu stats sampling interval config.
+- [x] add ept/npt page permission audit logger (debug-only).
 - add vmexit suppression list for noisy reasons.
 - add cpu topology snapshot (group, core, logical mapping).
 - add perf counters for ept/npt violations.

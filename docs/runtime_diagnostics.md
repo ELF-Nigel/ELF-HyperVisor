@@ -66,3 +66,62 @@ driver remains a skeleton and needs a wdk build and dedicated machine validation
 
 references: [intel vmx architecture](https://cdrdv2-public.intel.com/843859/332831-sdm-vol-3d-dec-24.pdf),
 [secure zeroing](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-rtlsecurezeromemory).
+
+## optional exit controls
+
+the existing kernel skeleton and handler extension points remain in place.
+`hv_init_ex` accepts a separate `hv_runtime_config_t`; `hv_init` uses defaults.
+the efi handoff format has not changed. configuration and policy are copied at
+init; changes require stopping producers, shutting down, and initializing again.
+the current backend is a single hypervisor instance.
+
+```c
+hv_runtime_config_t config;
+hv_exit_policy_t policy;
+hv_runtime_config_defaults(&config);
+hv_exit_policy_defaults(&policy);
+config.selftest_mode = HV_SELFTEST_DISPATCH;
+config.stats_interval_us = 1000;
+policy.rules[0] = (hv_exit_rule_t){ HV_EXIT_VMX, 10, HV_EXIT_DENY };
+policy.count = 1;
+config.exit_policy = &policy;
+/* call hv_init_ex with this config from your driver. */
+```
+
+policy entries use native reasons with an explicit vmx/svm architecture, and
+deny skips both registered handlers and fallback routing at the architecture
+entry points. this filters dispatch, not hardware interception: a denied exit
+still happened. driver authors must decide whether to stop the guest, inject a
+fault, or emulate it; blindly resuming can repeat the exit. direct calls to the
+old routing helpers do not pass through the architecture-entry policy gate.
+duplicate rules and invalid configuration are rejected. the default allows
+ordinary reasons; vmx entry failures and oversized native reason values fail
+closed. the existing skeleton's reason constants and handlers are preserved.
+
+`stats_interval_us` defaults to 1000; zero publishes on every exit. an optional
+`cpu_stats_intervals_us` array must have one entry per windows processor index.
+the upper limit is 60 seconds. each cpu counts every exit, including denials,
+and publishes cumulative counters on its first exit and on the first exit after
+the interval. idle cpus have no timer-driven publications. `hv_vmexit_cpu_sample`
+reads a published snapshot after the caller quiesces producers. the existing
+aggregate statistics and shared section layout are unchanged.
+
+`hvselftest.exe` runs a software cpuid exit smoke test for both architectures
+through the same policy/sampling code used by the driver, with a test callback.
+it does not execute a guest or touch live policy/counters. `--hardware`, or
+`HV_SELFTEST_HARDWARE` at init, reports unsupported rather than claiming a
+hardware vmexit. a driver must supply real guest entry/resume to support that.
+
+debug builds (`DBG=1`) audit existing ept tables on permission requests and npt
+tables after permission updates. `hv_debug_audit_page` can also be called by
+driver code while tables are stable. the read-only walker supports 4 kb, 2 mb,
+and 1 gb leaves, combines parent permissions, and flags writable/executable
+pages and invalid entry combinations. it assumes four-level tables and readable
+page-table mappings; it is a diagnostic, not a hardware validation substitute.
+release builds omit the kernel logger and its automatic table walks. no ept/npt
+mapping, invalidation, guest-entry, or guest-resume stubs have been replaced.
+
+ci builds the existing usermode/efi targets, runs the new production core tests
+in debug and release modes, and uploads `hvselftest.exe` with the tools artifact.
+kernel glue and hardware behavior still require the driver's own wdk and machine
+tests. the tests do not claim a complete kernel driver build.
